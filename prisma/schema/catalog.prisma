@@ -1,0 +1,193 @@
+// Global units, products, industries, and versioned production recipes.
+
+enum UnitDimension {
+  MASS
+  VOLUME
+  COUNT
+  ENERGY
+  TIME
+  SERVICE
+
+  @@map("unit_dimension")
+}
+
+enum ProductType {
+  RAW_MATERIAL
+  INTERMEDIATE
+  FINISHED_GOOD
+  SERVICE
+
+  @@map("product_type")
+}
+
+enum RecipeStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+
+  @@map("recipe_status")
+}
+
+model UnitOfMeasure {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String        @unique
+  name      String
+  dimension UnitDimension
+
+  products        Product[]
+  conversionsFrom UnitConversion[] @relation("ConversionFrom")
+  conversionsTo   UnitConversion[] @relation("ConversionTo")
+
+  @@map("units_of_measure")
+}
+
+model UnitConversion {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromUnitId String  @map("from_unit_id") @db.Uuid
+  toUnitId   String  @map("to_unit_id") @db.Uuid
+  factor     Decimal @db.Decimal(24, 10)
+
+  fromUnit UnitOfMeasure @relation("ConversionFrom", fields: [fromUnitId], references: [id], onDelete: Cascade)
+  toUnit   UnitOfMeasure @relation("ConversionTo", fields: [toUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([fromUnitId, toUnitId])
+  @@map("unit_conversions")
+}
+
+model ProductCategory {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code     String  @unique
+  name     String
+  parentId String? @map("parent_id") @db.Uuid
+
+  parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children ProductCategory[] @relation("CategoryTree")
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model Industry {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique
+  name        String
+  description String?
+
+  facilityTypes FacilityType[]
+  recipes       ProductionRecipe[]
+  companies     Company[]
+
+  @@map("industries")
+}
+
+// Reference price initialises a world; it is not a forced market price.
+model Product {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String      @unique
+  name                String
+  categoryId          String      @map("category_id") @db.Uuid
+  unitId              String      @map("unit_id") @db.Uuid
+  productType         ProductType @map("product_type")
+  shelfLifeTicks      Int?        @map("shelf_life_ticks")
+  storageRequirement  String?     @map("storage_requirement")
+  referencePriceMinor BigInt      @map("reference_price_minor")
+  substitutionGroup   String?     @map("substitution_group")
+  isTradable          Boolean     @default(true) @map("is_tradable")
+  // Scales route cost: shipping cost = route.cost_per_unit_minor * transport_factor.
+  transportFactor     Decimal     @default(1) @map("transport_factor") @db.Decimal(8, 4)
+  qualityAttributes   Json        @default("{}") @map("quality_attributes")
+
+  category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  unit     UnitOfMeasure   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  recipeInputs          RecipeInput[]
+  recipeOutputs         RecipeOutput[]
+  inventoryBalances     InventoryBalance[]
+  inventoryMovements    InventoryMovement[]
+  inventoryReservations InventoryReservation[]
+  shipmentLines         ShipmentLine[]
+  markets               Market[]
+  supplierRelationships SupplierRelationship[]
+  supplyContracts       SupplyContract[]
+  consumerDemands       ConsumerDemand[]
+  retailAllocations     RetailAllocation[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model FacilityType {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String  @unique
+  name       String
+  industryId String? @map("industry_id") @db.Uuid
+
+  industry   Industry?          @relation(fields: [industryId], references: [id], onDelete: Restrict)
+  facilities Facility[]
+  recipes    ProductionRecipe[]
+
+  @@map("facility_types")
+}
+
+// Recipes are versioned. A running job keeps the recipe row it started with.
+model ProductionRecipe {
+  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipeCode         String       @map("recipe_code")
+  version            Int
+  name               String
+  industryId         String?      @map("industry_id") @db.Uuid
+  facilityTypeId     String?      @map("facility_type_id") @db.Uuid
+  batchDurationTicks Int          @map("batch_duration_ticks")
+  laborPerBatch      Decimal      @default(0) @map("labor_per_batch") @db.Decimal(18, 4)
+  status             RecipeStatus @default(DRAFT)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  industry     Industry?        @relation(fields: [industryId], references: [id], onDelete: Restrict)
+  facilityType FacilityType?    @relation(fields: [facilityTypeId], references: [id], onDelete: Restrict)
+  inputs       RecipeInput[]
+  outputs      RecipeOutput[]
+  lines        ProductionLine[]
+  jobs         ProductionJob[]
+
+  @@unique([recipeCode, version])
+  @@map("production_recipes")
+}
+
+model RecipeInput {
+  recipeId         String  @map("recipe_id") @db.Uuid
+  productId        String  @map("product_id") @db.Uuid
+  quantityPerBatch Decimal @map("quantity_per_batch") @db.Decimal(18, 4)
+
+  recipe  ProductionRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([recipeId, productId])
+  @@index([productId])
+  @@map("recipe_inputs")
+}
+
+model RecipeOutput {
+  recipeId         String  @map("recipe_id") @db.Uuid
+  productId        String  @map("product_id") @db.Uuid
+  quantityPerBatch Decimal @map("quantity_per_batch") @db.Decimal(18, 4)
+  isByProduct      Boolean @default(false) @map("is_by_product")
+
+  recipe  ProductionRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([recipeId, productId])
+  @@map("recipe_outputs")
+}
+
+// Labor is pooled by skill group per region, not tracked per worker.
+model SkillGroup {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique
+  name        String
+  description String?
+
+  laborPools LaborPool[]
+  workforces FacilityWorkforce[]
+
+  @@map("skill_groups")
+}

@@ -1,0 +1,11 @@
+flowchart LR
+    Farm[Green Farms<br/>Wheat] -->|Wheat| Mill[Golden Mills<br/>Flour]
+    Mill -->|Flour| Bakery[Novara Foods<br/>Bread]
+    Bakery -->|Bread| Distributor[Fresh Distribution]
+    Distributor -->|Retail inventory| Store[City Mart]
+    Store -->|Sales| Consumers[Consumer cohorts]
+    Consumers -->|Spending| Store
+    Store -->|Payment| Distributor
+    Distributor -->|Payment| Bakery
+    Bakery -->|Payment| Mill
+    Mill -->|Payment| Farm

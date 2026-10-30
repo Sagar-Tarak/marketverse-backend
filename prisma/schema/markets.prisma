@@ -1,0 +1,251 @@
+// Supplier relationships, contracts, markets, orders, and trades.
+// Money fields are integer minor units; quantities are Decimal(18,4).
+
+enum MarketType {
+  WHOLESALE_PERIODIC
+  RETAIL_ALLOCATION
+  CONTRACT
+
+  @@map("market_type")
+}
+
+enum MarketStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+
+  @@map("market_status")
+}
+
+enum OrderSide {
+  BUY
+  SELL
+
+  @@map("order_side")
+}
+
+enum OrderStatus {
+  DRAFT
+  OPEN
+  PARTIALLY_FILLED
+  FILLED
+  CANCELLED
+  EXPIRED
+  REJECTED
+
+  @@map("order_status")
+}
+
+enum SettlementStatus {
+  PENDING
+  SETTLED
+  FAILED
+
+  @@map("settlement_status")
+}
+
+enum RelationshipStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@map("relationship_status")
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  DEFAULTED
+
+  @@map("contract_status")
+}
+
+model SupplierRelationship {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId           String             @map("world_id") @db.Uuid
+  buyerCompanyId    String             @map("buyer_company_id") @db.Uuid
+  supplierCompanyId String             @map("supplier_company_id") @db.Uuid
+  productId         String             @map("product_id") @db.Uuid
+  terms             Json               @default("{}")
+  reliability       Decimal            @default(1) @db.Decimal(6, 4)
+  status            RelationshipStatus @default(ACTIVE)
+  createdTick       Int                @map("created_tick")
+
+  buyer    Company @relation("SupplierBuyer", fields: [worldId, buyerCompanyId], references: [worldId, id], onDelete: NoAction)
+  supplier Company @relation("SupplierSupplier", fields: [worldId, supplierCompanyId], references: [worldId, id], onDelete: NoAction)
+  product  Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, buyerCompanyId, supplierCompanyId, productId])
+  @@index([worldId, supplierCompanyId])
+  @@map("supplier_relationships")
+}
+
+model SupplyContract {
+  id                    String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId               String         @map("world_id") @db.Uuid
+  buyerCompanyId        String         @map("buyer_company_id") @db.Uuid
+  sellerCompanyId       String         @map("seller_company_id") @db.Uuid
+  productId             String         @map("product_id") @db.Uuid
+  quantityPerDelivery   Decimal        @map("quantity_per_delivery") @db.Decimal(18, 4)
+  unitPriceMinor        BigInt         @map("unit_price_minor")
+  deliveryIntervalTicks Int            @map("delivery_interval_ticks")
+  startTick             Int            @map("start_tick")
+  endTick               Int?           @map("end_tick")
+  nextDeliveryTick      Int            @map("next_delivery_tick")
+  status                ContractStatus @default(DRAFT)
+
+  buyer   Company @relation("ContractBuyer", fields: [worldId, buyerCompanyId], references: [worldId, id], onDelete: NoAction)
+  seller  Company @relation("ContractSeller", fields: [worldId, sellerCompanyId], references: [worldId, id], onDelete: NoAction)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([worldId, status, nextDeliveryTick])
+  @@index([worldId, buyerCompanyId])
+  @@index([worldId, sellerCompanyId])
+  @@map("supply_contracts")
+}
+
+// regionId null = world-wide market. Postgres treats nulls as distinct in the
+// unique key, so world-wide uniqueness per product/type is a service rule.
+model Market {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId    String       @map("world_id") @db.Uuid
+  productId  String       @map("product_id") @db.Uuid
+  marketType MarketType   @map("market_type")
+  regionId   String?      @map("region_id") @db.Uuid
+  status     MarketStatus @default(ACTIVE)
+
+  world   GameWorld    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  region  WorldRegion? @relation(fields: [worldId, regionId], references: [worldId, id], onDelete: NoAction)
+
+  orders            MarketOrder[]
+  trades            MarketTrade[]
+  priceObservations MarketPriceObservation[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, productId, marketType, regionId])
+  @@map("markets")
+}
+
+// Invariants (CHECK in migration): quantity_total > 0, 0 <= quantity_remaining <= quantity_total,
+// limit_price_minor > 0. SELL reserves inventory (warehouseId); BUY reserves funds.
+model MarketOrder {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId            String      @map("world_id") @db.Uuid
+  marketId           String      @map("market_id") @db.Uuid
+  companyId          String      @map("company_id") @db.Uuid
+  warehouseId        String?     @map("warehouse_id") @db.Uuid
+  side               OrderSide
+  quantityTotal      Decimal     @map("quantity_total") @db.Decimal(18, 4)
+  quantityRemaining  Decimal     @map("quantity_remaining") @db.Decimal(18, 4)
+  limitPriceMinor    BigInt      @map("limit_price_minor")
+  reservedFundsMinor BigInt      @default(0) @map("reserved_funds_minor")
+  status             OrderStatus @default(DRAFT)
+  createdTick        Int         @map("created_tick")
+  expiryTick         Int?        @map("expiry_tick")
+  timePriority       BigInt      @map("time_priority")
+  operationKey       String      @map("operation_key")
+
+  market    Market     @relation(fields: [worldId, marketId], references: [worldId, id], onDelete: NoAction)
+  company   Company    @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  warehouse Warehouse? @relation(fields: [worldId, warehouseId], references: [worldId, id], onDelete: NoAction)
+
+  buyTrades  MarketTrade[] @relation("TradeBuyOrder")
+  sellTrades MarketTrade[] @relation("TradeSellOrder")
+
+  @@unique([worldId, id])
+  @@unique([worldId, operationKey])
+  @@index([worldId, marketId, side, status, limitPriceMinor, createdTick])
+  @@index([worldId, companyId, status])
+  @@map("market_orders")
+}
+
+// Immutable once SETTLED. tradeKey makes matching/settlement idempotent.
+model MarketTrade {
+  id                       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                  String           @map("world_id") @db.Uuid
+  marketId                 String           @map("market_id") @db.Uuid
+  buyOrderId               String           @map("buy_order_id") @db.Uuid
+  sellOrderId              String           @map("sell_order_id") @db.Uuid
+  buyerCompanyId           String           @map("buyer_company_id") @db.Uuid
+  sellerCompanyId          String           @map("seller_company_id") @db.Uuid
+  quantity                 Decimal          @db.Decimal(18, 4)
+  unitPriceMinor           BigInt           @map("unit_price_minor")
+  grossAmountMinor         BigInt           @map("gross_amount_minor")
+  feesMinor                BigInt           @default(0) @map("fees_minor")
+  settlementStatus         SettlementStatus @default(PENDING) @map("settlement_status")
+  settlementJournalEntryId String?          @map("settlement_journal_entry_id") @db.Uuid
+  tickNumber               Int              @map("tick_number")
+  tradeKey                 String           @map("trade_key")
+  createdAt                DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  market       Market        @relation(fields: [worldId, marketId], references: [worldId, id], onDelete: NoAction)
+  buyOrder     MarketOrder   @relation("TradeBuyOrder", fields: [worldId, buyOrderId], references: [worldId, id], onDelete: NoAction)
+  sellOrder    MarketOrder   @relation("TradeSellOrder", fields: [worldId, sellOrderId], references: [worldId, id], onDelete: NoAction)
+  buyer        Company       @relation("TradeBuyer", fields: [worldId, buyerCompanyId], references: [worldId, id], onDelete: NoAction)
+  seller       Company       @relation("TradeSeller", fields: [worldId, sellerCompanyId], references: [worldId, id], onDelete: NoAction)
+  journalEntry JournalEntry? @relation(fields: [worldId, settlementJournalEntryId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, tradeKey])
+  @@unique([worldId, settlementJournalEntryId])
+  @@index([worldId, marketId, tickNumber])
+  @@index([worldId, buyerCompanyId])
+  @@index([worldId, sellerCompanyId])
+  @@map("market_trades")
+}
+
+// Statistical price per market and tick. Not an executable quote.
+model MarketPriceObservation {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId            String  @map("world_id") @db.Uuid
+  marketId           String  @map("market_id") @db.Uuid
+  tickNumber         Int     @map("tick_number")
+  clearingPriceMinor BigInt? @map("clearing_price_minor")
+  bestBidMinor       BigInt? @map("best_bid_minor")
+  bestAskMinor       BigInt? @map("best_ask_minor")
+  volume             Decimal @default(0) @db.Decimal(18, 4)
+
+  market Market @relation(fields: [worldId, marketId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, marketId, tickNumber])
+  @@map("market_price_observations")
+}
+
+// Household demand per cohort and product; unserved = demand - allocated (lost sales).
+model ConsumerDemand {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId           String  @map("world_id") @db.Uuid
+  tickNumber        Int     @map("tick_number")
+  cohortId          String  @map("cohort_id") @db.Uuid
+  productId         String  @map("product_id") @db.Uuid
+  demandQuantity    Decimal @map("demand_quantity") @db.Decimal(18, 4)
+  allocatedQuantity Decimal @default(0) @map("allocated_quantity") @db.Decimal(18, 4)
+  unservedQuantity  Decimal @default(0) @map("unserved_quantity") @db.Decimal(18, 4)
+
+  cohort  PopulationCohort @relation(fields: [worldId, cohortId], references: [worldId, id], onDelete: NoAction)
+  product Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, tickNumber, cohortId, productId])
+  @@map("consumer_demands")
+}
+
+model RetailAllocation {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId      String  @map("world_id") @db.Uuid
+  tickNumber   Int     @map("tick_number")
+  cohortId     String  @map("cohort_id") @db.Uuid
+  businessId   String  @map("business_id") @db.Uuid
+  productId    String  @map("product_id") @db.Uuid
+  quantity     Decimal @db.Decimal(18, 4)
+  revenueMinor BigInt  @map("revenue_minor")
+
+  cohort   PopulationCohort @relation(fields: [worldId, cohortId], references: [worldId, id], onDelete: NoAction)
+  business Business         @relation(fields: [worldId, businessId], references: [worldId, id], onDelete: NoAction)
+  product  Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, tickNumber, cohortId, businessId, productId])
+  @@index([worldId, businessId, tickNumber])
+  @@map("retail_allocations")
+}

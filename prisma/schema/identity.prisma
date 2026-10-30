@@ -1,0 +1,46 @@
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("user_status")
+}
+
+model User {
+  id          String     @id @db.Uuid
+  email       String     @unique
+  displayName String?    @map("display_name")
+  status      UserStatus @default(ACTIVE)
+  preferences Json       @default("{}")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  ownedWorlds     GameWorld[]
+  participants    WorldParticipant[]
+  ownerships      CompanyOwnership[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  idempotencyKeys IdempotencyKey[]
+
+  @@map("users")
+}
+
+// Stores the first result of a state-changing request so a retry returns it
+// instead of repeating the effect. scope = 'world:<uuid>' or 'account'.
+model IdempotencyKey {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  scope          String
+  operation      String
+  key            String
+  requestHash    String   @map("request_hash")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scope, operation, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}

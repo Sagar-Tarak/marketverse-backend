@@ -1,0 +1,171 @@
+// Warehouses, inventory balances, movements, and shipments.
+// Quantities are Decimal(18,4) in the product's unit of measure.
+
+enum InventoryMovementType {
+  RECEIPT
+  CONSUMPTION
+  PRODUCTION_OUTPUT
+  TRANSFER_OUT
+  TRANSFER_IN
+  TRADE_SETTLEMENT
+  SPOILAGE
+  ADJUSTMENT
+
+  @@map("inventory_movement_type")
+}
+
+enum ReservationReason {
+  MARKET_ORDER
+  PRODUCTION_JOB
+  SHIPMENT
+
+  @@map("reservation_reason")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+
+  @@map("reservation_status")
+}
+
+enum ShipmentStatus {
+  PLANNED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+  LOST
+
+  @@map("shipment_status")
+}
+
+model Warehouse {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId    String   @map("world_id") @db.Uuid
+  facilityId String   @map("facility_id") @db.Uuid
+  code       String
+  capacity   Decimal  @db.Decimal(18, 4)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  facility Facility @relation(fields: [worldId, facilityId], references: [worldId, id], onDelete: NoAction)
+
+  balances     InventoryBalance[]
+  reservations InventoryReservation[]
+  movementsOut InventoryMovement[]    @relation("MovementSource")
+  movementsIn  InventoryMovement[]    @relation("MovementDestination")
+  shipmentsOut Shipment[]             @relation("ShipmentOrigin")
+  shipmentsIn  Shipment[]             @relation("ShipmentDestination")
+  marketOrders MarketOrder[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, code])
+  @@index([worldId, facilityId])
+  @@map("warehouses")
+}
+
+// Invariants (CHECK in migration): on_hand >= 0, reserved >= 0, reserved <= on_hand.
+// `version` is for optimistic concurrency on concurrent writes.
+model InventoryBalance {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId          String   @map("world_id") @db.Uuid
+  warehouseId      String   @map("warehouse_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  quantityOnHand   Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  quantityReserved Decimal  @default(0) @map("quantity_reserved") @db.Decimal(18, 4)
+  version          Int      @default(0)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  warehouse Warehouse @relation(fields: [worldId, warehouseId], references: [worldId, id], onDelete: NoAction)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, warehouseId, productId])
+  @@index([worldId, productId])
+  @@map("inventory_balances")
+}
+
+// A reservation holds stock for one purpose and is consumed or released once.
+model InventoryReservation {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId      String            @map("world_id") @db.Uuid
+  warehouseId  String            @map("warehouse_id") @db.Uuid
+  productId    String            @map("product_id") @db.Uuid
+  quantity     Decimal           @db.Decimal(18, 4)
+  reason       ReservationReason
+  referenceId  String            @map("reference_id") @db.Uuid
+  status       ReservationStatus @default(ACTIVE)
+  createdTick  Int               @map("created_tick")
+  resolvedTick Int?              @map("resolved_tick")
+
+  warehouse Warehouse @relation(fields: [worldId, warehouseId], references: [worldId, id], onDelete: NoAction)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, reason, referenceId, productId, warehouseId])
+  @@index([worldId, status])
+  @@map("inventory_reservations")
+}
+
+// Append-only. Balance change and movement insert happen in one transaction.
+// Null source = external supply (receipt); null destination = consumed/lost.
+model InventoryMovement {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                String                @map("world_id") @db.Uuid
+  productId              String                @map("product_id") @db.Uuid
+  sourceWarehouseId      String?               @map("source_warehouse_id") @db.Uuid
+  destinationWarehouseId String?               @map("destination_warehouse_id") @db.Uuid
+  quantity               Decimal               @db.Decimal(18, 4)
+  movementType           InventoryMovementType @map("movement_type")
+  referenceType          String                @map("reference_type")
+  referenceId            String                @map("reference_id") @db.Uuid
+  tickNumber             Int                   @map("tick_number")
+  operationKey           String                @map("operation_key")
+  lineNumber             Int                   @default(1) @map("line_number")
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  product              Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  sourceWarehouse      Warehouse? @relation("MovementSource", fields: [worldId, sourceWarehouseId], references: [worldId, id], onDelete: NoAction)
+  destinationWarehouse Warehouse? @relation("MovementDestination", fields: [worldId, destinationWarehouseId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, operationKey, lineNumber])
+  @@index([worldId, productId, tickNumber])
+  @@index([worldId, referenceType, referenceId])
+  @@map("inventory_movements")
+}
+
+model Shipment {
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                String         @map("world_id") @db.Uuid
+  originWarehouseId      String         @map("origin_warehouse_id") @db.Uuid
+  destinationWarehouseId String         @map("destination_warehouse_id") @db.Uuid
+  carrierCompanyId       String?        @map("carrier_company_id") @db.Uuid
+  routeId                String?        @map("route_id") @db.Uuid
+  status                 ShipmentStatus @default(PLANNED)
+  dispatchTick           Int            @map("dispatch_tick")
+  expectedArrivalTick    Int            @map("expected_arrival_tick")
+  actualArrivalTick      Int?           @map("actual_arrival_tick")
+  operationKey           String         @map("operation_key")
+
+  origin      Warehouse       @relation("ShipmentOrigin", fields: [worldId, originWarehouseId], references: [worldId, id], onDelete: NoAction)
+  destination Warehouse       @relation("ShipmentDestination", fields: [worldId, destinationWarehouseId], references: [worldId, id], onDelete: NoAction)
+  carrier     Company?        @relation(fields: [worldId, carrierCompanyId], references: [worldId, id], onDelete: NoAction)
+  route       TransportRoute? @relation(fields: [worldId, routeId], references: [worldId, id], onDelete: NoAction)
+  lines       ShipmentLine[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, operationKey])
+  @@index([worldId, status, expectedArrivalTick])
+  @@map("shipments")
+}
+
+model ShipmentLine {
+  shipmentId String  @map("shipment_id") @db.Uuid
+  worldId    String  @map("world_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  quantity   Decimal @db.Decimal(18, 4)
+
+  shipment Shipment @relation(fields: [worldId, shipmentId], references: [worldId, id], onDelete: NoAction)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([shipmentId, productId])
+  @@map("shipment_lines")
+}

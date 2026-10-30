@@ -1,0 +1,16 @@
+flowchart TB
+    Player[Player] --> Web[React Web Client]
+    Web --> API[NestJS API]
+    API --> Domain[Application and Domain Modules]
+    Domain --> DB[(PostgreSQL)]
+    API --> Queue[Redis / BullMQ]
+    Queue --> Worker[Simulation Worker]
+    Worker --> Engine[Simulation and Economic Engine]
+    Engine --> DB
+    Engine --> Events[Persisted Domain Events]
+    Events --> Reports[Reports and Notifications]
+    Reports --> Web
+    AI[AI Company Policies] --> Engine
+    Consumers[Aggregate Consumer Cohorts] --> Engine
+    Government[Government and Banks] --> Engine
+    Markets[Market and Trading Engine] --> Engine

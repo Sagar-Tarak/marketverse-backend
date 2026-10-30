@@ -1,0 +1,20 @@
+flowchart TB
+    World[GameWorld] --> Geo[Geography and Population]
+    World --> Companies[Companies and Businesses]
+    World --> Markets[Markets and Trading]
+    World --> Inventory[Inventory and Logistics]
+    World --> Finance[Finance and Ledger]
+    World --> Simulation[Simulation Ticks and Events]
+    Catalog[Global Catalog] --> Products[Products]
+    Catalog --> Industries[Industries]
+    Catalog --> Recipes[Production Recipes]
+    Products --> Markets
+    Products --> Inventory
+    Recipes --> Production[Production Jobs]
+    Companies --> Production
+    Companies --> Markets
+    Companies --> Finance
+    Companies --> Inventory
+    Simulation --> Companies
+    Simulation --> Markets
+    Simulation --> Geo

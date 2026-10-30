@@ -1,0 +1,282 @@
+// Missions, objectives, unlocks, rewards, notifications, and audit records.
+// Missions are objectives layered on the live simulation, never scripts that
+// bypass economic rules. Cash rewards must post a funded journal entry.
+
+enum WorldMissionStatus {
+  LOCKED
+  AVAILABLE
+  ACTIVE
+  COMPLETED
+  FAILED
+  EXPIRED
+
+  @@map("world_mission_status")
+}
+
+enum RewardType {
+  CASH_GRANT
+  UNLOCK
+  REPUTATION
+
+  @@map("reward_type")
+}
+
+model UnlockDefinition {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String  @unique
+  name         String
+  description  String?
+  // Conditions to unlock: revenue, reputation, research, license, capital.
+  requirements Json    @default("{}")
+
+  rewards      MissionReward[]
+  worldUnlocks WorldUnlock[]
+
+  @@map("unlock_definitions")
+}
+
+model MissionDefinition {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String
+  version     Int
+  title       String
+  description String?
+  sequence    Int     @default(0)
+  expiryTicks Int?    @map("expiry_ticks")
+
+  objectives    MissionObjectiveDefinition[]
+  rewards       MissionReward[]
+  prerequisites MissionPrerequisite[]        @relation("MissionRequires")
+  requiredBy    MissionPrerequisite[]        @relation("MissionRequiredBy")
+  worldMissions WorldMission[]
+
+  @@unique([code, version])
+  @@map("mission_definitions")
+}
+
+model MissionPrerequisite {
+  missionId             String @map("mission_id") @db.Uuid
+  prerequisiteMissionId String @map("prerequisite_mission_id") @db.Uuid
+
+  mission             MissionDefinition @relation("MissionRequires", fields: [missionId], references: [id], onDelete: Cascade)
+  prerequisiteMission MissionDefinition @relation("MissionRequiredBy", fields: [prerequisiteMissionId], references: [id], onDelete: Restrict)
+
+  @@id([missionId, prerequisiteMissionId])
+  @@map("mission_prerequisites")
+}
+
+// Measurable objective, e.g. conditionType = 'COMPANY_REVENUE', targetValue = 100000.
+model MissionObjectiveDefinition {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  missionId     String  @map("mission_id") @db.Uuid
+  code          String
+  description   String
+  conditionType String  @map("condition_type")
+  targetValue   Decimal @map("target_value") @db.Decimal(24, 8)
+  isOptional    Boolean @default(false) @map("is_optional")
+
+  mission  MissionDefinition       @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  progress WorldMissionObjective[]
+
+  @@unique([missionId, code])
+  @@map("mission_objective_definitions")
+}
+
+model MissionReward {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  missionId     String     @map("mission_id") @db.Uuid
+  rewardType    RewardType @map("reward_type")
+  amountMinor   BigInt?    @map("amount_minor")
+  unlockId      String?    @map("unlock_id") @db.Uuid
+  fundingSource String?    @map("funding_source")
+
+  mission MissionDefinition @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  unlock  UnlockDefinition? @relation(fields: [unlockId], references: [id], onDelete: Restrict)
+
+  @@map("mission_rewards")
+}
+
+model WorldMission {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId             String             @map("world_id") @db.Uuid
+  missionId           String             @map("mission_id") @db.Uuid
+  status              WorldMissionStatus @default(LOCKED)
+  startedTick         Int?               @map("started_tick")
+  completedTick       Int?               @map("completed_tick")
+  expiryTick          Int?               @map("expiry_tick")
+  grantJournalEntryId String?            @map("grant_journal_entry_id") @db.Uuid
+
+  world      GameWorld               @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  mission    MissionDefinition       @relation(fields: [missionId], references: [id], onDelete: Restrict)
+  grantEntry JournalEntry?           @relation(fields: [worldId, grantJournalEntryId], references: [worldId, id], onDelete: NoAction)
+  objectives WorldMissionObjective[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, missionId])
+  @@index([worldId, status])
+  @@map("world_missions")
+}
+
+model WorldMissionObjective {
+  worldMissionId String  @map("world_mission_id") @db.Uuid
+  worldId        String  @map("world_id") @db.Uuid
+  objectiveId    String  @map("objective_id") @db.Uuid
+  progressValue  Decimal @default(0) @map("progress_value") @db.Decimal(24, 8)
+  completed      Boolean @default(false)
+  completedTick  Int?    @map("completed_tick")
+
+  worldMission WorldMission               @relation(fields: [worldId, worldMissionId], references: [worldId, id], onDelete: NoAction)
+  objective    MissionObjectiveDefinition @relation(fields: [objectiveId], references: [id], onDelete: Restrict)
+
+  @@id([worldMissionId, objectiveId])
+  @@map("world_mission_objectives")
+}
+
+model WorldUnlock {
+  worldId      String @map("world_id") @db.Uuid
+  unlockId     String @map("unlock_id") @db.Uuid
+  unlockedTick Int    @map("unlocked_tick")
+
+  world  GameWorld        @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  unlock UnlockDefinition @relation(fields: [unlockId], references: [id], onDelete: Restrict)
+
+  @@id([worldId, unlockId])
+  @@map("world_unlocks")
+}
+
+// Notifications are messages, not authoritative state; clients can refetch.
+model Notification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId    String    @map("world_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String
+  title      String
+  body       String?
+  payload    Json      @default("{}")
+  tickNumber Int?      @map("tick_number")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  readAt     DateTime? @map("read_at") @db.Timestamptz(3)
+
+  world GameWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+// Append-only record of who changed what. worldId null = account-level action.
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId     String?  @map("world_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  world     GameWorld? @relation(fields: [worldId], references: [id], onDelete: Restrict)
+  actorUser User?      @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([worldId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+enum ResearchStatus {
+  IN_PROGRESS
+  COMPLETED
+
+  @@map("research_status")
+}
+
+model ResearchDefinition {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String  @unique
+  name          String
+  description   String?
+  costMinor     BigInt  @map("cost_minor")
+  durationTicks Int     @map("duration_ticks")
+  effects       Json    @default("{}")
+
+  companyResearches CompanyResearch[]
+
+  @@map("research_definitions")
+}
+
+model CompanyResearch {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId       String         @map("world_id") @db.Uuid
+  companyId     String         @map("company_id") @db.Uuid
+  researchId    String         @map("research_id") @db.Uuid
+  status        ResearchStatus @default(IN_PROGRESS)
+  startedTick   Int            @map("started_tick")
+  completedTick Int?           @map("completed_tick")
+
+  company  Company            @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  research ResearchDefinition @relation(fields: [researchId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, companyId, researchId])
+  @@map("company_researches")
+}
+
+model LicenseDefinition {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique
+  name        String
+  description String?
+
+  companyLicenses CompanyLicense[]
+
+  @@map("license_definitions")
+}
+
+// regionId null = valid in every region. Postgres treats nulls as distinct in
+// the unique key, so a partial index covers the null case (see CONSTRAINTS.md).
+model CompanyLicense {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId     String  @map("world_id") @db.Uuid
+  companyId   String  @map("company_id") @db.Uuid
+  licenseId   String  @map("license_id") @db.Uuid
+  regionId    String? @map("region_id") @db.Uuid
+  grantedTick Int     @map("granted_tick")
+  expiresTick Int?    @map("expires_tick")
+
+  company Company           @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  license LicenseDefinition @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+  region  WorldRegion?      @relation(fields: [worldId, regionId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, companyId, licenseId, regionId])
+  @@map("company_licenses")
+}
+
+model CompanyReputation {
+  companyId   String  @id @map("company_id") @db.Uuid
+  worldId     String  @map("world_id") @db.Uuid
+  score       Decimal @default(0) @db.Decimal(10, 4)
+  updatedTick Int     @default(0) @map("updated_tick")
+
+  company Company @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, companyId])
+  @@map("company_reputations")
+}
+
+// News is generated from real simulation events and links back to the event.
+model NewsArticle {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId    String   @map("world_id") @db.Uuid
+  eventId    String?  @map("event_id") @db.Uuid
+  tickNumber Int      @map("tick_number")
+  category   String
+  headline   String
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  world GameWorld        @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  event SimulationEvent? @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@index([worldId, tickNumber])
+  @@map("news_articles")
+}

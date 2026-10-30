@@ -1,0 +1,151 @@
+// Game worlds, membership, world settings, and world clocks.
+
+enum GameWorldStatus {
+  CREATING
+  ACTIVE
+  ARCHIVED
+
+  @@map("game_world_status")
+}
+
+enum WorldParticipantRole {
+  OWNER
+  MEMBER
+
+  @@map("world_participant_role")
+}
+
+enum Difficulty {
+  EASY
+  NORMAL
+  HARD
+
+  @@map("difficulty")
+}
+
+enum CatchUpPolicy {
+  NONE
+  CAPPED
+  SUMMARIZED
+
+  @@map("catch_up_policy")
+}
+
+model GameWorld {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerUserId          String          @map("owner_user_id") @db.Uuid
+  name                 String
+  scenarioCode         String          @map("scenario_code")
+  scenarioVersion      Int             @map("scenario_version")
+  status               GameWorldStatus @default(CREATING)
+  currencyCode         String          @map("currency_code") @db.Char(3)
+  randomSeed           BigInt          @map("random_seed")
+  modelVersion         String          @map("model_version")
+  // Immutable world-start settings chosen by the player (doc 01 §4).
+  difficulty           Difficulty      @default(NORMAL)
+  startingCapitalMinor BigInt          @map("starting_capital_minor")
+  startSettings        Json            @default("{}") @map("start_settings")
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner        User               @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  scenario     ScenarioTemplate   @relation(fields: [scenarioCode, scenarioVersion], references: [code, version], onDelete: Restrict)
+  participants WorldParticipant[]
+  clock        WorldClock?
+  policies     WorldPolicy[]
+  shocks       EconomicShock[]
+
+  regions           WorldRegion[]
+  companies         Company[]
+  markets           Market[]
+  financialAccounts FinancialAccount[]
+  journalEntries    JournalEntry[]
+  ticks             SimulationTick[]
+  events            SimulationEvent[]
+  snapshots         WorldSnapshot[]
+  indicators        EconomicIndicator[]
+  missions          WorldMission[]
+  unlocks           WorldUnlock[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  news              NewsArticle[]
+
+  @@index([ownerUserId])
+  @@map("game_worlds")
+}
+
+// One human participant per world initially (enforced in application code);
+// modelled separately so shared worlds need no redesign.
+model WorldParticipant {
+  id       String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId  String               @map("world_id") @db.Uuid
+  userId   String               @map("user_id") @db.Uuid
+  role     WorldParticipantRole
+  joinedAt DateTime             @default(now()) @map("joined_at") @db.Timestamptz(3)
+
+  world GameWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, userId])
+  @@index([userId])
+  @@map("world_participants")
+}
+
+// Single authoritative clock record per world.
+model WorldClock {
+  worldId            String        @id @map("world_id") @db.Uuid
+  currentTick        Int           @default(0) @map("current_tick")
+  calendarYear       Int           @map("calendar_year")
+  calendarMonth      Int           @map("calendar_month")
+  calendarDay        Int           @map("calendar_day")
+  simulationSpeed    Int           @default(1) @map("simulation_speed")
+  paused             Boolean       @default(true)
+  lastCompletedAt    DateTime?     @map("last_completed_at") @db.Timestamptz(3)
+  lastRealActivityAt DateTime?     @map("last_real_activity_at") @db.Timestamptz(3)
+  catchUpPolicy      CatchUpPolicy @default(CAPPED) @map("catch_up_policy")
+  maxCatchUpTicks    Int           @default(30) @map("max_catch_up_ticks")
+
+  world GameWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@map("world_clocks")
+}
+
+enum EffectStatus {
+  SCHEDULED
+  ACTIVE
+  EXPIRED
+
+  @@map("effect_status")
+}
+
+// Active government/regulatory policy; params are validated by the policy type.
+model WorldPolicy {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId           String       @map("world_id") @db.Uuid
+  policyType        String       @map("policy_type")
+  params            Json         @default("{}")
+  effectiveFromTick Int          @map("effective_from_tick")
+  effectiveToTick   Int?         @map("effective_to_tick")
+  status            EffectStatus @default(SCHEDULED)
+
+  world GameWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, status, effectiveFromTick])
+  @@map("world_policies")
+}
+
+// Scheduled exogenous event (weather, price shock). Seeded, so replay is deterministic.
+model EconomicShock {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId   String       @map("world_id") @db.Uuid
+  shockType String       @map("shock_type")
+  params    Json         @default("{}")
+  startTick Int          @map("start_tick")
+  endTick   Int?         @map("end_tick")
+  status    EffectStatus @default(SCHEDULED)
+
+  world GameWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@index([worldId, status, startTick])
+  @@map("economic_shocks")
+}

@@ -1,0 +1,237 @@
+// Accounts, journals, ledger postings, loans, and payments.
+// All amounts are integer minor units. Posted entries are immutable;
+// corrections are new reversal entries that reference the original.
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+
+  @@map("account_type")
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+
+  @@map("account_status")
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  REVERSED
+
+  @@map("journal_entry_status")
+}
+
+enum LoanStatus {
+  ACTIVE
+  REPAID
+  DEFAULTED
+  WRITTEN_OFF
+
+  @@map("loan_status")
+}
+
+enum LoanPaymentStatus {
+  SCHEDULED
+  PAID
+  PARTIAL
+  MISSED
+
+  @@map("loan_payment_status")
+}
+
+// Owner is exactly one of company or cohort (CHECK in migration).
+model FinancialAccount {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId      String        @map("world_id") @db.Uuid
+  companyId    String?       @map("company_id") @db.Uuid
+  cohortId     String?       @map("cohort_id") @db.Uuid
+  accountCode  String        @map("account_code")
+  name         String
+  accountType  AccountType   @map("account_type")
+  currencyCode String        @map("currency_code") @db.Char(3)
+  status       AccountStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  world   GameWorld         @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  company Company?          @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  cohort  PopulationCohort? @relation(fields: [worldId, cohortId], references: [worldId, id], onDelete: NoAction)
+
+  postings LedgerPosting[]
+  balance  AccountBalance?
+
+  @@unique([worldId, id])
+  @@unique([worldId, companyId, accountCode])
+  @@unique([worldId, cohortId, accountCode])
+  @@map("financial_accounts")
+}
+
+// Reconciled projection of postings. Never edited independently of the ledger.
+model AccountBalance {
+  accountId     String    @id @map("account_id") @db.Uuid
+  worldId       String    @map("world_id") @db.Uuid
+  balanceMinor  BigInt    @default(0) @map("balance_minor")
+  lastPostingAt DateTime? @map("last_posting_at") @db.Timestamptz(3)
+  version       Int       @default(0)
+
+  account FinancialAccount @relation(fields: [worldId, accountId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, accountId])
+  @@map("account_balances")
+}
+
+// Per posted entry and currency, SUM(debit) = SUM(credit): enforced by a
+// deferred constraint trigger in the migration, plus the posting service.
+model JournalEntry {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId              String             @map("world_id") @db.Uuid
+  transactionReference String             @map("transaction_reference")
+  entryTick            Int                @map("entry_tick")
+  description          String?
+  status               JournalEntryStatus @default(DRAFT)
+  reversesEntryId      String?            @map("reverses_entry_id") @db.Uuid
+  operationKey         String             @map("operation_key")
+  postedAt             DateTime?          @map("posted_at") @db.Timestamptz(3)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  world         GameWorld      @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  reversesEntry JournalEntry?  @relation("EntryReversal", fields: [worldId, reversesEntryId], references: [worldId, id], onDelete: NoAction)
+  reversedBy    JournalEntry[] @relation("EntryReversal")
+
+  postings       LedgerPosting[]
+  trade          MarketTrade?
+  taxAssessments TaxAssessment[]
+  worldMissions  WorldMission[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, operationKey])
+  @@unique([reversesEntryId])
+  @@index([worldId, entryTick])
+  @@map("journal_entries")
+}
+
+// Exactly one of debit/credit is > 0 (CHECK in migration).
+model LedgerPosting {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId        String @map("world_id") @db.Uuid
+  journalEntryId String @map("journal_entry_id") @db.Uuid
+  accountId      String @map("financial_account_id") @db.Uuid
+  debitMinor     BigInt @default(0) @map("debit_minor_units")
+  creditMinor    BigInt @default(0) @map("credit_minor_units")
+  currencyCode   String @map("currency_code") @db.Char(3)
+
+  journalEntry JournalEntry     @relation(fields: [worldId, journalEntryId], references: [worldId, id], onDelete: NoAction)
+  account      FinancialAccount @relation(fields: [worldId, accountId], references: [worldId, id], onDelete: NoAction)
+
+  @@index([worldId, accountId, journalEntryId])
+  @@index([worldId, journalEntryId])
+  @@map("ledger_postings")
+}
+
+model Loan {
+  id                        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                   String     @map("world_id") @db.Uuid
+  lenderCompanyId           String     @map("lender_company_id") @db.Uuid
+  borrowerCompanyId         String     @map("borrower_company_id") @db.Uuid
+  principalMinor            BigInt     @map("principal_minor")
+  outstandingPrincipalMinor BigInt     @map("outstanding_principal_minor")
+  interestRate              Decimal    @map("interest_rate") @db.Decimal(10, 6)
+  startTick                 Int        @map("start_tick")
+  maturityTick              Int        @map("maturity_tick")
+  status                    LoanStatus @default(ACTIVE)
+
+  lender   Company       @relation("LoanLender", fields: [worldId, lenderCompanyId], references: [worldId, id], onDelete: NoAction)
+  borrower Company       @relation("LoanBorrower", fields: [worldId, borrowerCompanyId], references: [worldId, id], onDelete: NoAction)
+  payments LoanPayment[]
+
+  @@unique([worldId, id])
+  @@index([worldId, borrowerCompanyId, status])
+  @@index([worldId, lenderCompanyId])
+  @@map("loans")
+}
+
+model LoanPayment {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId            String            @map("world_id") @db.Uuid
+  loanId             String            @map("loan_id") @db.Uuid
+  dueTick            Int               @map("due_tick")
+  principalDueMinor  BigInt            @map("principal_due_minor")
+  interestDueMinor   BigInt            @map("interest_due_minor")
+  principalPaidMinor BigInt            @default(0) @map("principal_paid_minor")
+  interestPaidMinor  BigInt            @default(0) @map("interest_paid_minor")
+  status             LoanPaymentStatus @default(SCHEDULED)
+
+  loan Loan @relation(fields: [worldId, loanId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, loanId, dueTick])
+  @@index([worldId, status, dueTick])
+  @@map("loan_payments")
+}
+
+enum TaxType {
+  CORPORATE_PROFIT
+  SALES
+  PAYROLL
+  TARIFF
+
+  @@map("tax_type")
+}
+
+enum TaxAssessmentStatus {
+  ASSESSED
+  PAID
+  WAIVED
+
+  @@map("tax_assessment_status")
+}
+
+// A tax owed on a defined base for a period. Payment posts a journal entry to
+// the government account; subsidies and grants are journal entries, not rows here.
+model TaxAssessment {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId          String              @map("world_id") @db.Uuid
+  companyId        String              @map("company_id") @db.Uuid
+  taxType          TaxType             @map("tax_type")
+  periodStartTick  Int                 @map("period_start_tick")
+  periodEndTick    Int                 @map("period_end_tick")
+  taxableBaseMinor BigInt              @map("taxable_base_minor")
+  rate             Decimal             @db.Decimal(10, 6)
+  amountMinor      BigInt              @map("amount_minor")
+  status           TaxAssessmentStatus @default(ASSESSED)
+  journalEntryId   String?             @map("journal_entry_id") @db.Uuid
+  operationKey     String              @map("operation_key")
+
+  company      Company       @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  journalEntry JournalEntry? @relation(fields: [worldId, journalEntryId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, operationKey])
+  @@index([worldId, companyId, taxType, periodEndTick])
+  @@map("tax_assessments")
+}
+
+// Read model for income statement / cash flow: one row per company per tick,
+// derived from ledger postings. Never the source of truth.
+model CompanyPeriodResult {
+  id                    String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId               String @map("world_id") @db.Uuid
+  companyId             String @map("company_id") @db.Uuid
+  tickNumber            Int    @map("tick_number")
+  revenueMinor          BigInt @map("revenue_minor")
+  costOfGoodsSoldMinor  BigInt @map("cost_of_goods_sold_minor")
+  operatingExpenseMinor BigInt @map("operating_expense_minor")
+  interestExpenseMinor  BigInt @map("interest_expense_minor")
+  taxExpenseMinor       BigInt @map("tax_expense_minor")
+  netProfitMinor        BigInt @map("net_profit_minor")
+  cashBalanceMinor      BigInt @map("cash_balance_minor")
+
+  company Company @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+
+  @@unique([worldId, companyId, tickNumber])
+  @@map("company_period_results")
+}

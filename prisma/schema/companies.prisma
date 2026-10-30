@@ -1,0 +1,262 @@
+// Companies, businesses, facilities, ownership, and AI profiles.
+
+enum CompanyType {
+  PLAYER
+  AI
+  INSTITUTION
+
+  @@map("company_type")
+}
+
+enum CompanyStatus {
+  OPERATING
+  DISTRESSED
+  RESTRUCTURING
+  INSOLVENT
+  CLOSED
+
+  @@map("company_status")
+}
+
+enum OwnerType {
+  USER
+  COMPANY
+
+  @@map("owner_type")
+}
+
+enum BusinessType {
+  AGRICULTURE
+  EXTRACTION
+  MANUFACTURING
+  UTILITY
+  WHOLESALE
+  RETAIL
+  LOGISTICS
+  FINANCIAL
+  GOVERNMENT
+
+  @@map("business_type")
+}
+
+enum FacilityStatus {
+  PLANNED
+  ACTIVE
+  IDLE
+  CLOSED
+
+  @@map("facility_status")
+}
+
+enum ProductionJobStatus {
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  CANCELLED
+
+  @@map("production_job_status")
+}
+
+// Strategy archetypes are parameter sets, not hard-coded personalities.
+model AiStrategyTemplate {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique
+  name        String
+  description String?
+  weights     Json    @default("{}")
+  parameters  Json    @default("{}")
+
+  profiles AiCompanyProfile[]
+
+  @@map("ai_strategy_templates")
+}
+
+// Institutions (government, banks) are companies of type INSTITUTION.
+model Company {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId            String        @map("world_id") @db.Uuid
+  companyCode        String        @map("company_code")
+  name               String
+  companyType        CompanyType   @map("company_type")
+  status             CompanyStatus @default(OPERATING)
+  industryId         String?       @map("industry_id") @db.Uuid
+  headquartersCityId String?       @map("headquarters_city_id") @db.Uuid
+  foundedTick        Int           @default(0) @map("founded_tick")
+  creditScore        Int           @default(600) @map("credit_score")
+  closedTick         Int?          @map("closed_tick")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  world            GameWorld  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  industry         Industry?  @relation(fields: [industryId], references: [id], onDelete: Restrict)
+  headquartersCity WorldCity? @relation(fields: [worldId, headquartersCityId], references: [worldId, id], onDelete: NoAction)
+
+  aiProfile          AiCompanyProfile?
+  ownedStakes        CompanyOwnership[]     @relation("OwnedCompany")
+  heldStakes         CompanyOwnership[]     @relation("OwnerCompany")
+  businesses         Business[]
+  facilities         Facility[]
+  financialAccounts  FinancialAccount[]
+  loansLent          Loan[]                 @relation("LoanLender")
+  loansBorrowed      Loan[]                 @relation("LoanBorrower")
+  marketOrders       MarketOrder[]
+  tradesBought       MarketTrade[]          @relation("TradeBuyer")
+  tradesSold         MarketTrade[]          @relation("TradeSeller")
+  supplierAsBuyer    SupplierRelationship[] @relation("SupplierBuyer")
+  supplierAsSupplier SupplierRelationship[] @relation("SupplierSupplier")
+  contractsAsBuyer   SupplyContract[]       @relation("ContractBuyer")
+  contractsAsSeller  SupplyContract[]       @relation("ContractSeller")
+  shipmentsCarried   Shipment[]
+  aiDecisionLogs     AiDecisionLog[]
+  taxAssessments     TaxAssessment[]
+  periodResults      CompanyPeriodResult[]
+  reputation         CompanyReputation?
+  researches         CompanyResearch[]
+  licenses           CompanyLicense[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, companyCode])
+  @@index([worldId, status])
+  @@map("companies")
+}
+
+model AiCompanyProfile {
+  companyId            String  @id @map("company_id") @db.Uuid
+  worldId              String  @map("world_id") @db.Uuid
+  strategyTemplateId   String  @map("strategy_template_id") @db.Uuid
+  riskTolerance        Decimal @map("risk_tolerance") @db.Decimal(6, 4)
+  planningParameters   Json    @default("{}") @map("planning_parameters")
+  decisionCadenceTicks Int     @default(1) @map("decision_cadence_ticks")
+  nextDecisionTick     Int     @default(0) @map("next_decision_tick")
+
+  company          Company            @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  strategyTemplate AiStrategyTemplate @relation(fields: [strategyTemplateId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, companyId])
+  @@index([worldId, nextDecisionTick])
+  @@map("ai_company_profiles")
+}
+
+// Effective-dated ownership. Owner is exactly one of user or company (CHECK in migration).
+model CompanyOwnership {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId             String    @map("world_id") @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  ownerType           OwnerType @map("owner_type")
+  ownerUserId         String?   @map("owner_user_id") @db.Uuid
+  ownerCompanyId      String?   @map("owner_company_id") @db.Uuid
+  ownershipPercentage Decimal   @map("ownership_percentage") @db.Decimal(7, 4)
+  effectiveFromTick   Int       @map("effective_from_tick")
+  effectiveToTick     Int?      @map("effective_to_tick")
+
+  company      Company  @relation("OwnedCompany", fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  ownerUser    User?    @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  ownerCompany Company? @relation("OwnerCompany", fields: [worldId, ownerCompanyId], references: [worldId, id], onDelete: NoAction)
+
+  @@index([worldId, companyId])
+  @@map("company_ownerships")
+}
+
+model Business {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId      String        @map("world_id") @db.Uuid
+  companyId    String        @map("company_id") @db.Uuid
+  businessType BusinessType  @map("business_type")
+  name         String
+  cityId       String        @map("city_id") @db.Uuid
+  status       CompanyStatus @default(OPERATING)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  company Company   @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  city    WorldCity @relation(fields: [worldId, cityId], references: [worldId, id], onDelete: NoAction)
+
+  facilities        Facility[]
+  retailAllocations RetailAllocation[]
+
+  @@unique([worldId, id])
+  @@index([worldId, companyId, status])
+  @@index([worldId, cityId])
+  @@map("businesses")
+}
+
+model Facility {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId        String         @map("world_id") @db.Uuid
+  companyId      String         @map("company_id") @db.Uuid
+  businessId     String         @map("business_id") @db.Uuid
+  facilityTypeId String         @map("facility_type_id") @db.Uuid
+  cityId         String         @map("city_id") @db.Uuid
+  name           String
+  capacity       Decimal        @db.Decimal(18, 4)
+  status         FacilityStatus @default(PLANNED)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  company      Company      @relation(fields: [worldId, companyId], references: [worldId, id], onDelete: NoAction)
+  business     Business     @relation(fields: [worldId, businessId], references: [worldId, id], onDelete: NoAction)
+  city         WorldCity    @relation(fields: [worldId, cityId], references: [worldId, id], onDelete: NoAction)
+  facilityType FacilityType @relation(fields: [facilityTypeId], references: [id], onDelete: Restrict)
+
+  warehouses      Warehouse[]
+  productionLines ProductionLine[]
+  workforces      FacilityWorkforce[]
+
+  @@unique([worldId, id])
+  @@index([worldId, companyId, status])
+  @@index([worldId, cityId])
+  @@map("facilities")
+}
+
+// Employees are an aggregate per facility, not one row per worker.
+model FacilityWorkforce {
+  facilityId    String   @map("facility_id") @db.Uuid
+  skillGroupId  String   @map("skill_group_id") @db.Uuid
+  worldId       String   @map("world_id") @db.Uuid
+  headcount     Int
+  wageRateMinor BigInt   @map("wage_rate_minor")
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  facility   Facility   @relation(fields: [worldId, facilityId], references: [worldId, id], onDelete: NoAction)
+  skillGroup SkillGroup @relation(fields: [skillGroupId], references: [id], onDelete: Restrict)
+
+  @@id([facilityId, skillGroupId])
+  @@map("facility_workforces")
+}
+
+model ProductionLine {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId    String         @map("world_id") @db.Uuid
+  facilityId String         @map("facility_id") @db.Uuid
+  recipeId   String         @map("recipe_id") @db.Uuid
+  capacity   Decimal        @db.Decimal(18, 4)
+  efficiency Decimal        @default(1) @db.Decimal(8, 4)
+  status     FacilityStatus @default(PLANNED)
+
+  facility Facility         @relation(fields: [worldId, facilityId], references: [worldId, id], onDelete: NoAction)
+  recipe   ProductionRecipe @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  jobs     ProductionJob[]
+
+  @@unique([worldId, id])
+  @@index([worldId, facilityId])
+  @@map("production_lines")
+}
+
+// recipeId pins the exact recipe version the job started with.
+model ProductionJob {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId          String              @map("world_id") @db.Uuid
+  productionLineId String              @map("production_line_id") @db.Uuid
+  recipeId         String              @map("recipe_id") @db.Uuid
+  batches          Decimal             @db.Decimal(18, 4)
+  startTick        Int                 @map("start_tick")
+  dueTick          Int                 @map("due_tick")
+  completedTick    Int?                @map("completed_tick")
+  status           ProductionJobStatus @default(SCHEDULED)
+  operationKey     String              @map("operation_key")
+
+  productionLine ProductionLine   @relation(fields: [worldId, productionLineId], references: [worldId, id], onDelete: NoAction)
+  recipe         ProductionRecipe @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, operationKey])
+  @@index([worldId, status, dueTick])
+  @@map("production_jobs")
+}

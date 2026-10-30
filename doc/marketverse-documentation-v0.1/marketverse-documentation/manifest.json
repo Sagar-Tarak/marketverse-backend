@@ -1,0 +1,25 @@
+{
+  "project": "Marketverse",
+  "documentation_version": "0.1.0",
+  "date": "2026-10-30",
+  "documents": [
+    "README.md",
+    "docs/01-product-and-game-design.md",
+    "docs/02-novara-world-and-economy.md",
+    "docs/03-economic-models.md",
+    "docs/04-simulation-engine.md",
+    "docs/05-database-architecture.md",
+    "docs/06-backend-architecture-and-api.md",
+    "docs/07-ai-companies-and-market-engine.md",
+    "docs/08-frontend-and-ui-ux.md",
+    "docs/09-testing-operations-and-security.md",
+    "docs/10-development-roadmap.md",
+    "docs/decisions/README.md",
+    "docs/decisions/template.md",
+    "docs/diagrams/marketverse-context.mmd",
+    "docs/diagrams/daily-tick.mmd",
+    "docs/diagrams/supply-chain.mmd",
+    "docs/diagrams/database-domains.mmd"
+  ],
+  "note": "Foundational specifications. Numerical economic parameters are proposals requiring simulation calibration."
+}

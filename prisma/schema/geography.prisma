@@ -1,0 +1,201 @@
+// Scenario and world-specific regions, cities, and population cohorts.
+
+// ── Scenario definitions (global, versioned, reusable across worlds) ──
+
+enum ScenarioStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+
+  @@map("scenario_status")
+}
+
+model ScenarioTemplate {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String
+  version            Int
+  name               String
+  description        String?
+  status             ScenarioStatus @default(DRAFT)
+  startDate          DateTime       @map("start_date") @db.Date
+  currencyCode       String         @map("currency_code") @db.Char(3)
+  currencyMinorUnits Int            @map("currency_minor_units")
+  config             Json           @default("{}")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  worlds            GameWorld[]
+  regionDefinitions RegionDefinition[]
+  cohortDefinitions CohortDefinition[]
+
+  @@unique([code, version])
+  @@map("scenario_templates")
+}
+
+model RegionDefinition {
+  id                     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scenarioId             String  @map("scenario_id") @db.Uuid
+  code                   String
+  name                   String
+  terrain                String?
+  climate                String?
+  infrastructureCapacity Int     @default(0) @map("infrastructure_capacity")
+  modifiers              Json    @default("{}")
+
+  scenario     ScenarioTemplate @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  cities       CityDefinition[]
+  worldRegions WorldRegion[]
+
+  @@unique([scenarioId, code])
+  @@map("region_definitions")
+}
+
+model CityDefinition {
+  id                     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  regionDefinitionId     String @map("region_definition_id") @db.Uuid
+  code                   String
+  name                   String
+  infrastructureCapacity Int    @default(0) @map("infrastructure_capacity")
+
+  regionDefinition RegionDefinition @relation(fields: [regionDefinitionId], references: [id], onDelete: Cascade)
+  worldCities      WorldCity[]
+
+  @@unique([regionDefinitionId, code])
+  @@map("city_definitions")
+}
+
+model CohortDefinition {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scenarioId        String  @map("scenario_id") @db.Uuid
+  code              String
+  name              String
+  householdSize     Decimal @map("household_size") @db.Decimal(6, 2)
+  priceSensitivity  Decimal @map("price_sensitivity") @db.Decimal(8, 4)
+  savingsPropensity Decimal @map("savings_propensity") @db.Decimal(8, 4)
+  consumptionBasket Json    @default("{}") @map("consumption_basket")
+  preferences       Json    @default("{}")
+
+  scenario          ScenarioTemplate   @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  populationCohorts PopulationCohort[]
+
+  @@unique([scenarioId, code])
+  @@map("cohort_definitions")
+}
+
+// ── World-scoped instances ──
+
+model WorldRegion {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId            String   @map("world_id") @db.Uuid
+  regionDefinitionId String   @map("region_definition_id") @db.Uuid
+  code               String
+  name               String
+  modifiers          Json     @default("{}")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  world            GameWorld        @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  regionDefinition RegionDefinition @relation(fields: [regionDefinitionId], references: [id], onDelete: Restrict)
+  cities           WorldCity[]
+  markets          Market[]
+  laborPools       LaborPool[]
+  licenses         CompanyLicense[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, code])
+  @@map("world_regions")
+}
+
+model WorldCity {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                String   @map("world_id") @db.Uuid
+  regionId               String   @map("region_id") @db.Uuid
+  cityDefinitionId       String   @map("city_definition_id") @db.Uuid
+  code                   String
+  name                   String
+  infrastructureCapacity Int      @default(0) @map("infrastructure_capacity")
+  infrastructureState    Json     @default("{}") @map("infrastructure_state")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  region         WorldRegion    @relation(fields: [worldId, regionId], references: [worldId, id], onDelete: NoAction)
+  cityDefinition CityDefinition @relation(fields: [cityDefinitionId], references: [id], onDelete: Restrict)
+
+  cohorts                PopulationCohort[]
+  headquarteredCompanies Company[]
+  businesses             Business[]
+  facilities             Facility[]
+  routesFrom             TransportRoute[]   @relation("RouteFrom")
+  routesTo               TransportRoute[]   @relation("RouteTo")
+
+  @@unique([worldId, id])
+  @@unique([worldId, code])
+  @@index([worldId, regionId])
+  @@map("world_cities")
+}
+
+// A cohort is an aggregate of similar households, never one row per citizen.
+// Money fields are integer minor units of the world currency.
+model PopulationCohort {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId                    String   @map("world_id") @db.Uuid
+  cityId                     String   @map("city_id") @db.Uuid
+  cohortDefinitionId         String   @map("cohort_definition_id") @db.Uuid
+  householdCount             Int      @map("household_count")
+  employedWorkforce          Int      @map("employed_workforce")
+  unemployedWorkforce        Int      @map("unemployed_workforce")
+  disposableIncomeMinor      BigInt   @default(0) @map("disposable_income_minor")
+  essentialSpendingMinor     BigInt   @default(0) @map("essential_spending_minor")
+  discretionarySpendingMinor BigInt   @default(0) @map("discretionary_spending_minor")
+  savingsMinor               BigInt   @default(0) @map("savings_minor")
+  debtMinor                  BigInt   @default(0) @map("debt_minor")
+  incomeDistribution         Json     @default("{}") @map("income_distribution")
+  updatedAt                  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  city             WorldCity        @relation(fields: [worldId, cityId], references: [worldId, id], onDelete: NoAction)
+  cohortDefinition CohortDefinition @relation(fields: [cohortDefinitionId], references: [id], onDelete: Restrict)
+
+  financialAccounts FinancialAccount[]
+  consumerDemands   ConsumerDemand[]
+  retailAllocations RetailAllocation[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, cityId, cohortDefinitionId])
+  @@map("population_cohorts")
+}
+
+// Directed transport link between two cities; drives shipment cost and delay.
+model TransportRoute {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId          String  @map("world_id") @db.Uuid
+  fromCityId       String  @map("from_city_id") @db.Uuid
+  toCityId         String  @map("to_city_id") @db.Uuid
+  distanceKm       Decimal @map("distance_km") @db.Decimal(10, 2)
+  transitTicks     Int     @map("transit_ticks")
+  costPerUnitMinor BigInt  @map("cost_per_unit_minor")
+  capacityPerTick  Decimal @map("capacity_per_tick") @db.Decimal(18, 4)
+
+  fromCity  WorldCity  @relation("RouteFrom", fields: [worldId, fromCityId], references: [worldId, id], onDelete: NoAction)
+  toCity    WorldCity  @relation("RouteTo", fields: [worldId, toCityId], references: [worldId, id], onDelete: NoAction)
+  shipments Shipment[]
+
+  @@unique([worldId, id])
+  @@unique([worldId, fromCityId, toCityId])
+  @@map("transport_routes")
+}
+
+// Aggregate regional labor supply and wage per skill group.
+// Invariant (CHECK in migration): 0 <= employed <= workforce.
+model LaborPool {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worldId       String  @map("world_id") @db.Uuid
+  regionId      String  @map("region_id") @db.Uuid
+  skillGroupId  String  @map("skill_group_id") @db.Uuid
+  workforce     Int
+  employed      Int     @default(0)
+  wageRateMinor BigInt  @map("wage_rate_minor")
+  productivity  Decimal @default(1) @db.Decimal(8, 4)
+
+  region     WorldRegion @relation(fields: [worldId, regionId], references: [worldId, id], onDelete: NoAction)
+  skillGroup SkillGroup  @relation(fields: [skillGroupId], references: [id], onDelete: Restrict)
+
+  @@unique([worldId, regionId, skillGroupId])
+  @@map("labor_pools")
+}
