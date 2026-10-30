@@ -17,6 +17,14 @@ export function validateEnvironment(environment: Environment): Environment {
     throw new Error('NODE_ENV must be development, test, or production.');
   }
 
+  // Auth is the development-only header identity until Supabase JWT verification exists
+  // (modules/identity/functions/dev-auth.functions.ts). It must never run in production.
+  if (environment.NODE_ENV === 'production') {
+    throw new Error(
+      'Production auth (Supabase) is not implemented yet: refusing to start with development auth.',
+    );
+  }
+
   if (!/^postgres(ql)?:\/\//.test(environment.DATABASE_URL ?? '')) {
     throw new Error('DATABASE_URL must be a postgresql:// connection string.');
   }

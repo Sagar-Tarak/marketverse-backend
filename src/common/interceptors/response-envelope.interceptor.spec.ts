@@ -3,9 +3,14 @@ import { lastValueFrom, of } from 'rxjs';
 import { describe, expect, it } from 'vitest';
 import { ResponseEnvelopeInterceptor } from './response-envelope.interceptor.js';
 
-function run(result: unknown, statusCode = 200): Promise<unknown> {
+function run(
+  result: unknown,
+  method = 'GET',
+  handler = () => undefined,
+): Promise<unknown> {
   const context = {
-    switchToHttp: () => ({ getResponse: () => ({ statusCode }) }),
+    getHandler: () => handler,
+    switchToHttp: () => ({ getRequest: () => ({ method }) }),
   } as unknown as ExecutionContext;
   const next: CallHandler = { handle: () => of(result) };
   return lastValueFrom(
@@ -19,6 +24,20 @@ describe('ResponseEnvelopeInterceptor', () => {
       statusCode: 200,
       data: { code: 'WHEAT' },
       message: 'Success',
+    });
+  });
+
+  it('reports 201 for a POST', async () => {
+    await expect(run({ id: 'w1' }, 'POST')).resolves.toMatchObject({
+      statusCode: 201,
+    });
+  });
+
+  it('honours an explicit @HttpCode', async () => {
+    const handler = () => undefined;
+    Reflect.defineMetadata('__httpCode__', 202, handler);
+    await expect(run({ ok: true }, 'POST', handler)).resolves.toMatchObject({
+      statusCode: 202,
     });
   });
 

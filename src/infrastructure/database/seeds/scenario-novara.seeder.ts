@@ -119,7 +119,18 @@ export const scenarioNovaraSeeder: Seeder = {
       referenceWageMinorPerHour: 1500,
       breadPerHouseholdPerDay: 0.5,
       employmentRate: 0.92,
-      routes: { transitKmPerTick: 400, costPerUnitKmMinor: 0.05 },
+      // ponytail: capacity is effectively unlimited in the prototype; tighten when logistics matter.
+      routes: {
+        transitKmPerTick: 400,
+        costPerUnitKmMinor: 0.05,
+        capacityPerTick: 1_000_000,
+      },
+      // ponytail: placeholder balancing inputs; wageMultiplier scales referenceWageMinorPerHour.
+      skillGroups: {
+        UNSKILLED: { workforceShare: 0.6, wageMultiplier: '1' },
+        SKILLED: { workforceShare: 0.35, wageMultiplier: '1.4' },
+        PROFESSIONAL: { workforceShare: 0.05, wageMultiplier: '2' },
+      },
       taxes: { salesTax: 0.1, corporateTax: 0.2 },
       cities: Object.fromEntries(
         REGIONS.flatMap((region) =>

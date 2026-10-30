@@ -21,7 +21,7 @@ pnpm format
 ```
 src/
   main.ts, app.module.ts
-  config/            env validation (add every new env var here + .env.example), configureApp()
+  config/            AppConfig, env validation (every new env var), configureApp()
   common/            only code ≥2 modules use: pagination/, filters/, interceptors/, utils/
   health/            GET /api/v1/health (DB ping, 503 if down)
   infrastructure/    database/ (PrismaService, TransactionClient, seeds/), queue/
@@ -60,6 +60,28 @@ modules/<name>/
 - New env var: add to `config/environment.validation.ts` (+ spec) and `.env.example`; read through `ConfigService`.
 - Reuse before writing. No abstraction for one use.
 
+## Shared helpers (use these, don't rewrite them)
+
+| Need | Use | Where |
+|---|---|---|
+| Read config | `ConfigService<AppConfig, true>` → `config.get('database.url', { infer: true })`. Never `process.env` in services | `config/configuration.ts` |
+| New env var | validate in `environment.validation.ts` (+ spec), add to `AppConfig` and `.env.example` | `config/` |
+| Paginate | `PaginationQueryDto`, `skipTake`, `toPage`, `DEFAULT_PAGE_LIMIT`, `MAX_PAGE_LIMIT` | `common/pagination/` |
+| Fail a business rule | `throwAppError(msg, HttpStatus.X)` | `common/utils/app-error.util.ts` |
+| Money math | `parseMinor`, `formatMinor`, `mulMinor(minor, '0.05', mode)`. Rounding: tax/interest/price `HALF_UP`, shipping per line `CEIL`. All `bigint`, never float | `common/utils/money.util.ts` |
+| Join a transaction | `TransactionClient` type on helper params | `infrastructure/database/prisma.service.ts` |
+| HTTP test | `createTestApp({ seed: true })` boots the real app on the test DB (handles the env/import-order trap) | `test/integration/test-app.ts` |
+| DB rows in a test | `createWorld(prisma)` builds a full minimal world; `resetDatabase` | `test/integration/fixture.ts` |
+
+## Enforced by tests (`pnpm test`)
+
+- No import cycles between modules.
+- Controllers never import Prisma or `PrismaService`.
+- `src/simulation/` imports no Nest, Prisma, Redis or queue code.
+- `prisma/` contains no TypeScript.
+
+Also enforced by tooling: lint `no-explicit-any` is an error; `tsconfig` has `noUncheckedIndexedAccess`, `noImplicitOverride`, `noImplicitReturns` and `exactOptionalPropertyTypes` on.
+
 ## Recipes (copy from `src/modules/catalog`)
 
 **List endpoint**
@@ -92,7 +114,13 @@ return this.prisma.$transaction(async (tx) => {
 
 **Unit test** — `new Service({ model: { findUnique: () => Promise.resolve(row) } } as never)`; cover not-found, each business-rule failure, and money-as-string.
 
-**HTTP test** — one `test/integration/<name>.int-spec.ts`. Set `process.env.DATABASE_URL` to the test DB, then `await import('../../src/app.module.js')` (ConfigModule captures env when AppModule is imported).
+**HTTP test** — one `test/integration/<name>.int-spec.ts`:
+```ts
+let testApp: TestApp;
+beforeAll(async () => { testApp = await createTestApp({ seed: true }); });
+afterAll(() => testApp.close());
+// request(testApp.app.getHttpServer()).get('/api/v1/…').expect(200)
+```
 
 ## Database workflow (no migration files yet)
 

@@ -1,43 +1,16 @@
-import type { INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
-import type { PrismaClient } from '@prisma/client';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { configureApp } from '../../src/config/app.config.js';
-import { seeders } from '../../src/infrastructure/database/seeds/seeders.js';
-import { createTestClient, resetDatabase } from './fixture.js';
+import { createTestApp, type TestApp } from './test-app.js';
 
-let app: INestApplication;
-let prisma: PrismaClient;
+let testApp: TestApp;
+let app: TestApp['app'];
 
 beforeAll(async () => {
-  prisma = createTestClient();
-  await resetDatabase(prisma);
-  for (const seeder of seeders) {
-    await prisma.$transaction((tx) => seeder.run(tx));
-  }
-
-  // ConfigModule captures the env when AppModule is *defined* (at import), so point
-  // DATABASE_URL at the test database first and import AppModule afterwards.
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-  const { AppModule } = await import('../../src/app.module.js');
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
-  expect(moduleRef.get(ConfigService).get('DATABASE_URL')).toBe(
-    process.env.TEST_DATABASE_URL,
-  );
-  app = moduleRef.createNestApplication();
-  configureApp(app);
-  await app.init();
+  testApp = await createTestApp({ seed: true });
+  app = testApp.app;
 });
 
-afterAll(async () => {
-  await app.close();
-  await resetDatabase(prisma);
-  await prisma.$disconnect();
-});
+afterAll(() => testApp.close());
 
 describe('GET /api/v1/catalog', () => {
   it('lists units', async () => {

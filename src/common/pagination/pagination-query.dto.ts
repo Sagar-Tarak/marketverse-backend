@@ -1,6 +1,10 @@
 import { Type } from 'class-transformer';
 import { IsInt, Max, Min } from 'class-validator';
-import type { PageRequest } from './pagination.js';
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  type PageRequest,
+} from './pagination.js';
 
 export class PaginationQueryDto implements PageRequest {
   @Type(() => Number)
@@ -11,6 +15,6 @@ export class PaginationQueryDto implements PageRequest {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
-  limit = 20;
+  @Max(MAX_PAGE_LIMIT)
+  limit = DEFAULT_PAGE_LIMIT;
 }

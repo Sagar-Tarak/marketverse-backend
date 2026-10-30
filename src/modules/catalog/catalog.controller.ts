@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Public } from '../../common/decorators/public.decorator.js';
 import { PaginationQueryDto } from '../../common/pagination/pagination-query.dto.js';
 import type { Page } from '../../common/pagination/pagination.js';
 import { CatalogService } from './catalog.service.js';
@@ -9,6 +10,7 @@ import type {
   UnitView,
 } from './schemas/catalog.schema.js';
 
+@Public() // game reference data: same for every player
 @ApiTags('catalog')
 @Controller('catalog')
 export class CatalogController {

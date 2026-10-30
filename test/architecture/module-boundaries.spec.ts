@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { importSpecifiers, sourceFiles } from './scan.js';
 
 const SRC = resolve(import.meta.dirname, '../../src');
 const MODULES = join(SRC, 'modules');
@@ -37,24 +37,16 @@ function moduleOf(absolutePath: string): string | undefined {
 
 function moduleGraph(): Map<string, Set<string>> {
   const graph = new Map<string, Set<string>>();
-  const files = readdirSync(MODULES, {
-    recursive: true,
-    encoding: 'utf8',
-  }).filter((file) => file.endsWith('.ts') && !file.endsWith('.spec.ts'));
 
-  for (const file of files) {
-    const absolute = join(MODULES, file);
-    const from = moduleOf(absolute);
+  for (const file of sourceFiles(MODULES)) {
+    const from = moduleOf(file);
     if (!from) continue;
     const edges = graph.get(from) ?? new Set<string>();
     graph.set(from, edges);
 
-    const source = readFileSync(absolute, 'utf8');
-    for (const [, specifier = ''] of source.matchAll(
-      /(?:from|import)\s+['"]([^'"]+)['"]/g,
-    )) {
+    for (const specifier of importSpecifiers(file)) {
       if (!specifier.startsWith('.')) continue;
-      const to = moduleOf(resolve(dirname(absolute), specifier));
+      const to = moduleOf(resolve(dirname(file), specifier));
       if (to && to !== from) edges.add(to);
     }
   }

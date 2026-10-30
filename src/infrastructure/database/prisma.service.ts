@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Prisma } from '@prisma/client';
+import type { AppConfig } from '../../config/configuration.js';
 
 /** The `tx` inside `prisma.$transaction(async (tx) => …)`. Pass it to helpers that must join the transaction. */
 export type TransactionClient = Prisma.TransactionClient;
@@ -11,10 +12,10 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  constructor(config: ConfigService) {
+  constructor(config: ConfigService<AppConfig, true>) {
     super({
       adapter: new PrismaPg({
-        connectionString: config.getOrThrow<string>('DATABASE_URL'),
+        connectionString: config.get('database.url', { infer: true }),
       }),
     });
   }

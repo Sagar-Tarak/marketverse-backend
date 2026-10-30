@@ -1,3 +1,6 @@
+export const DEFAULT_PAGE_LIMIT = 20;
+export const MAX_PAGE_LIMIT = 100;
+
 export interface PageRequest {
   readonly page: number;
   readonly limit: number;

@@ -27,6 +27,12 @@ describe('validateEnvironment', () => {
     ).toThrow('REDIS_URL');
   });
 
+  it('refuses to start in production while auth is development-only', () => {
+    expect(() =>
+      validateEnvironment({ ...valid, NODE_ENV: 'production' }),
+    ).toThrow('Production auth');
+  });
+
   it('accepts a redis URL', () => {
     expect(() =>
       validateEnvironment({ ...valid, REDIS_URL: 'redis://localhost:6379' }),
